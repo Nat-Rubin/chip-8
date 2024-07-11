@@ -14,28 +14,35 @@ mod lib;
 mod stack;
 mod chip8;
 
-fn sdl_draw(bitmap: &[[u16; 32]; 64], renderer: RendererWindow) {
+fn sdl_draw(chip8: &Chip8, renderer: &RendererWindow) {
     renderer.set_draw_color(0, 0, 0, 255).unwrap();
     renderer.clear().unwrap();
     renderer.set_draw_color(255, 255, 255, 255).unwrap();
-    let scale: c_int = 20;
-    for i in 0..bitmap.len() {
-        for j in 0..bitmap[i].len() {
-            let x: c_int = i as c_int;
-            let y: c_int = j as c_int;
-            let p1: [c_int; 2] = [x, x*scale];
-            let p2: [c_int; 2] = [y, y*scale];
-            let points: [[c_int; 2]; 2] = [p1, p2];
-            renderer.draw_lines(&points).unwrap();
+    let scale: c_int = chip8.scale;
+    for (i, row) in chip8.bitmap.iter().enumerate() {
+        for (j, &pixel) in row.iter().enumerate() {
+            if pixel == 0 {continue}
+            let x: c_int = j as c_int;
+            let y: c_int = i as c_int;
+            let mut p1: [c_int; 2];
+            let mut p2: [c_int; 2];
+            for k in 0..chip8.scale {
+                p1 = [x*scale, y*scale+k];
+                p2 = [x*scale+scale, y*scale+k];
+                let points: [[c_int; 2]; 2] = [p1, p2];
+                renderer.draw_lines(&points).expect("nope");
+                renderer.present();
+            }
         }
     }
 }
 
+
 // return error when an error occurs lmao
-fn execute_instruction(chip8: &mut Chip8, window: &mut RendererWindow) {
+fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow) {
     // fetch
     chip8.mem[chip8.pc as usize] = 0b11011010;
-    chip8.mem[chip8.pc as usize +1] = 0b10101100;
+    chip8.mem[chip8.pc as usize +1] = 0b10101111;
     let instruct: u16 = ((chip8.mem[chip8.pc as usize] as u16) << 8) + chip8.mem[(chip8.pc as usize)+1] as u16;
     chip8.pc += 2;
     // decode & execute
@@ -52,9 +59,8 @@ fn execute_instruction(chip8: &mut Chip8, window: &mut RendererWindow) {
                             match nib_3 {
                                 0x0 => {
                                     // clear screen
-                                    unsafe {
-                                        //glClear(GL_COLOR_BUFFER_BIT);
-                                    }
+                                    chip8.bitmap = [[0; 64]; 32];
+                                    sdl_draw(&chip8, &renderer);
                                 }
                                 0xE => {
                                     // return from subroutine
@@ -80,186 +86,236 @@ fn execute_instruction(chip8: &mut Chip8, window: &mut RendererWindow) {
         },
         0x3 => {
             // skips if VX == NN
-            let v0_ptr = std::ptr::addr_of!(chip8.V0);
-            unsafe {
-                let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                if *vx_ptr == ((nib_2 << 4) + nib_3) as u8 {
-                    chip8.pc += 2;
-                };
-            }
+            // let v0_ptr = std::ptr::addr_of!(chip8.V0);
+            // unsafe {
+            //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
+            //     if *vx_ptr == ((nib_2 << 4) + nib_3) as u8 {
+            //         chip8.pc += 2;
+            //     };
+            // }
+            if chip8.V[nib_1 as usize] == ((nib_2 << 4) + nib_3) as u8 {
+                chip8.pc += 2;
+            };
         },
         0x4 => {
             // skips if VX != NN
-            let v0_ptr = std::ptr::addr_of!(chip8.V0);
-            unsafe {
-                let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                if *vx_ptr != ((nib_2 << 4) + nib_3) as u8 {
-                    chip8.pc += 2;
-                };
-            }
+            // let v0_ptr = std::ptr::addr_of!(chip8.V0);
+            // unsafe {
+            //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
+            //     if *vx_ptr != ((nib_2 << 4) + nib_3) as u8 {
+            //         chip8.pc += 2;
+            //     };
+            // }
+            if chip8.V[nib_1 as usize] != ((nib_2 << 4) + nib_3) as u8 {
+                chip8.pc += 2;
+            };
         },
         0x5 => {
             // skips if VX == VY
-            let v0_ptr = std::ptr::addr_of!(chip8.V0);
-            unsafe {
-                let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                if *vx_ptr == *vy_ptr {
-                    chip8.pc += 2;
-                };
+            // let v0_ptr = std::ptr::addr_of!(chip8.V0);
+            // unsafe {
+            //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
+            //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
+            //     if *vx_ptr == *vy_ptr {
+            //         chip8.pc += 2;
+            //     };
+            // }
+            if chip8.V[nib_1 as usize] == chip8.V[nib_2 as usize] {
+                chip8.pc += 2;
             }
         },
         0x6 => {
             // set VX to NN
-            let v0_ptr: *mut u8 = &mut chip8.V0;
-            unsafe {
-                let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                *vx_ptr = ((nib_2 << 4) + nib_3) as u8;
-            }
-
+            // let v0_ptr: *mut u8 = &mut chip8.V0;
+            // unsafe {
+            //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
+            //     *vx_ptr = ((nib_2 << 4) + nib_3) as u8;
+            // }
+            chip8.V[nib_1 as usize] = ((nib_2 << 4) + nib_3) as u8;
         },
         0x7 => {
             // add NN to VX
-            let v0_ptr: *mut u8 = &mut chip8.V0;
-            unsafe {
-                let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                *vx_ptr += ((nib_2 << 4) + nib_3) as u8;
-            }
+            // let v0_ptr: *mut u8 = &mut chip8.V0;
+            // unsafe {
+            //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
+            //     *vx_ptr += ((nib_2 << 4) + nib_3) as u8;
+            // }
+            chip8.V[nib_1 as usize] += ((nib_2 << 4) + nib_3) as u8;
         },
         0x8 => {
             match nib_3 {
                 0x0 => {
                     // set VX to VY
-                    let v0_ptr: *mut u8 = &mut chip8.V0;
-                    unsafe {
-                        let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                        let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                        *vx_ptr == *vy_ptr;
-                    }
+                    // let v0_ptr: *mut u8 = &mut chip8.V0;
+                    // unsafe {
+                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
+                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
+                    //     *vx_ptr = *vy_ptr;
+                    // }
+                    chip8.V[nib_1 as usize] = chip8.V[nib_2 as usize]
                 },
                 0x1 => {
                     // set VX to VX | VY
-                    let v0_ptr: *mut u8 = &mut chip8.V0;
-                    unsafe {
-                        let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                        let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                        *vx_ptr |= *vy_ptr;
-                    }
+                    // let v0_ptr: *mut u8 = &mut chip8.V0;
+                    // unsafe {
+                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
+                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
+                    //     *vx_ptr |= *vy_ptr;
+                    // }
+                    chip8.V[nib_1 as usize] |= chip8.V[nib_2 as usize];
                 },
                 0x2 => {
                     // set VX to VX | VY
-                    let v0_ptr: *mut u8 = &mut chip8.V0;
-                    unsafe {
-                        let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                        let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                        *vx_ptr &= *vy_ptr;
-                    }
+                    // let v0_ptr: *mut u8 = &mut chip8.V0;
+                    // unsafe {
+                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
+                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
+                    //     *vx_ptr &= *vy_ptr;
+                    // }
                 },
                 0x3 => {
                     // set VX to VX | VY
-                    let v0_ptr: *mut u8 = &mut chip8.V0;
-                    unsafe {
-                        let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                        let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                        *vx_ptr ^= *vy_ptr;
-                    }
+                    // let v0_ptr: *mut u8 = &mut chip8.V0;
+                    // unsafe {
+                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
+                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
+                    //     *vx_ptr ^= *vy_ptr;
+                    // }
+                    chip8.V[nib_1 as usize] ^= chip8.V[nib_2 as usize];
                 },
                 0x4 => {
                     // set VX to VX + VY
-                    let v0_ptr: *mut u8 = &mut chip8.V0;
-                    unsafe {
-                        let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                        let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                        let vx_as_num = *vx_ptr;
-                        let vy_as_num = *vy_ptr;
-                        match vx_as_num.checked_add(vy_as_num) {
-                            Some(_) => {
-                                *vx_ptr += *vy_ptr;
-                                chip8.VF = 0;
-                            },
-                            None => {
-                                *vx_ptr = *vx_ptr.wrapping_add(*vy_ptr as usize);
-                                chip8.VF = 1;
-                            }
-                        };
+                    // let v0_ptr: *mut u8 = &mut chip8.V0;
+                    // unsafe {
+                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
+                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
+                    //     let vx_as_num = *vx_ptr;
+                    //     let vy_as_num = *vy_ptr;
+                    //     match vx_as_num.checked_add(vy_as_num) {
+                    //         Some(_) => {
+                    //             *vx_ptr += *vy_ptr;
+                    //             chip8.VF = 0;
+                    //         },
+                    //         None => {
+                    //             *vx_ptr = *vx_ptr.wrapping_add(*vy_ptr as usize);
+                    //             chip8.VF = 1;
+                    //         }
+                    //     };
+                    // }
+                    match chip8.V[nib_1 as usize].checked_add(chip8.V[nib_2 as usize]) {
+                        Some(_) => {
+                            chip8.V[nib_1 as usize] += chip8.V[nib_2 as usize];
+                            chip8.V[0xF] = 0;
+                        },
+                        None => {
+                            chip8.V[nib_1 as usize] = chip8.V[nib_2 as usize].wrapping_add(chip8.V[nib_2 as usize]);
+                            chip8.V[0xF] = 1;
+                        }
                     }
                 },
                 0x5 => {
                     // set VX to VX - VY
-                    let v0_ptr: *mut u8 = &mut chip8.V0;
-                    unsafe {
-                        let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                        let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                        let vx_as_num = *vx_ptr;
-                        let vy_as_num = *vy_ptr;
-                        match vx_as_num.checked_sub(vy_as_num) {
-                            Some(_) => {
-                                *vx_ptr -= *vy_ptr;
-                                chip8.VF = 1;
-                            },
-                            None => {
-                                *vx_ptr = *vx_ptr.wrapping_sub(*vy_ptr as usize);
-                                chip8.VF = 0;
-                            }
-                        };
+                    // let v0_ptr: *mut u8 = &mut chip8.V0;
+                    // unsafe {
+                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
+                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
+                    //     let vx_as_num = *vx_ptr;
+                    //     let vy_as_num = *vy_ptr;
+                    //     match vx_as_num.checked_sub(vy_as_num) {
+                    //         Some(_) => {
+                    //             *vx_ptr -= *vy_ptr;
+                    //             chip8.VF = 1;
+                    //         },
+                    //         None => {
+                    //             *vx_ptr = *vx_ptr.wrapping_sub(*vy_ptr as usize);
+                    //             chip8.VF = 0;
+                    //         }
+                    //     };
+                    // }
+                    match chip8.V[nib_1 as usize].checked_sub(chip8.V[nib_2 as usize]) {
+                        Some(_) => {
+                            chip8.V[nib_1 as usize] -= chip8.V[nib_2 as usize];
+                            chip8.V[0xF] = 0;
+                        },
+                        None => {
+                            chip8.V[nib_1 as usize] = chip8.V[nib_1 as usize].wrapping_sub(chip8.V[nib_2 as usize]);
+                            chip8.V[0xF] = 1;
+                        }
                     }
                 },
                 0x6 => {
                     // TODO: make configurable by user which version to use
                     // set VX to VY, shift by 1 to right
-                    let v0_ptr: *mut u8 = &mut chip8.V0;
-                    unsafe {
-                        let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                        let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                        *vx_ptr = *vy_ptr;
-                        chip8.VF = *vx_ptr & 1;
-                        *vx_ptr >>= 1;
-                    }
+                    // let v0_ptr: *mut u8 = &mut chip8.V0;
+                    // unsafe {
+                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
+                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
+                    //     *vx_ptr = *vy_ptr;
+                    //     chip8.VF = *vx_ptr & 1;
+                    //     *vx_ptr >>= 1;
+                    // }
+                    chip8.V[nib_1 as usize] = chip8.V[nib_2 as usize] >> 1;
                 },
                 0x7 => {
                     // set VX to VY - VX
-                    let v0_ptr: *mut u8 = &mut chip8.V0;
-                    unsafe {
-                        let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                        let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                        let vx_as_num = *vx_ptr;
-                        let vy_as_num = *vy_ptr;
-                        match vy_as_num.checked_sub(vx_as_num) {
-                            Some(_) => {
-                                *vy_ptr -= *vx_ptr;
-                                chip8.VF = 1;
-                            },
-                            None => {
-                                *vx_ptr = *vy_ptr.wrapping_sub(*vx_ptr as usize);
-                                chip8.VF = 0;
-                            }
-                        };
+                    // let v0_ptr: *mut u8 = &mut chip8.V0;
+                    // unsafe {
+                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
+                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
+                    //     let vx_as_num = *vx_ptr;
+                    //     let vy_as_num = *vy_ptr;
+                    //     match vy_as_num.checked_sub(vx_as_num) {
+                    //         Some(_) => {
+                    //             *vx_ptr = *vy_ptr - *vx_ptr;
+                    //             chip8.VF = 1;
+                    //         },
+                    //         None => {
+                    //             *vx_ptr = *vy_ptr.wrapping_sub(*vx_ptr as usize);
+                    //             chip8.VF = 0;
+                    //         }
+                    //     };
+                    // }
+                    match chip8.V[nib_2 as usize].checked_sub(chip8.V[nib_1 as usize]) {
+                        Some(_) => {
+                            chip8.V[nib_1 as usize] = chip8.V[nib_2 as usize] - chip8.V[nib_1 as usize];
+                            chip8.V[0xF] = 1;
+                        },
+                        None => {
+                            chip8.V[nib_1 as usize] = chip8.V[nib_2 as usize].wrapping_sub(chip8.V[nib_1 as usize]);
+                            chip8.V[0xF] = 0;
+                        }
                     }
                 },
                 0xE => {
                     // TODO: make configurable by user which version to use
                     // set VX to VY, shift by 1 to right
-                    let v0_ptr: *mut u8 = &mut chip8.V0;
-                    unsafe {
-                        let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                        let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                        *vx_ptr = *vy_ptr;
-                        chip8.VF = (*vx_ptr >> 7) & 1;
-                        *vx_ptr <<= 1;
-                    }
+                    // let v0_ptr: *mut u8 = &mut chip8.V0;
+                    // unsafe {
+                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
+                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
+                    //     *vx_ptr = *vy_ptr;
+                    //     chip8.VF = (*vx_ptr >> 7) & 1;
+                    //     *vx_ptr <<= 1;
+                    // }
+                    chip8.V[nib_1 as usize] = chip8.V[nib_2 as usize];
+                    chip8.V[0xF] = (chip8.V[nib_1 as usize] > 7) as u8 & 1;
+                    chip8.V[nib_1 as usize] << 1;
                 },
                 _ => println!("command not implemented"),
             }
         }
         0x9 => {
             // skips if VX != VY
-            let v0_ptr = std::ptr::addr_of!(chip8.V0);
-            unsafe {
-                let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                if *vx_ptr != *vy_ptr {
-                    chip8.pc += 2;
-                };
+            // let v0_ptr = std::ptr::addr_of!(chip8.V0);
+            // unsafe {
+            //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
+            //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
+            //     if *vx_ptr != *vy_ptr {
+            //         chip8.pc += 2;
+            //     };
+            // }
+            if chip8.V[nib_1 as usize] != chip8.V[nib_2 as usize] {
+                chip8.pc += 2;
             }
         },
         0xA => {
@@ -269,18 +325,19 @@ fn execute_instruction(chip8: &mut Chip8, window: &mut RendererWindow) {
         0xB => {
             // TODO: make configurable by user which version to use
             // pc = NNN + V0
-            chip8.pc = chip8.V0 as u16 + ((nib_1 << 8) + (nib_2 << 4) + nib_3);
+            chip8.pc = chip8.V[0] as u16 + ((nib_1 << 8) + (nib_2 << 4) + nib_3);
         },
         0xC => {
             // set VX to rand num & NN
-            let v0_ptr: *mut u8 = &mut chip8.V0;
+            // let v0_ptr: *mut u8 = &mut chip8.V0;
             let NN:u8 = ((nib_2 << 4) + nib_3) as u8;
             let mut rng = rand::thread_rng();
             let rand_num: u8 = (rng.gen::<u8>());
-            unsafe {
-                let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                *vx_ptr = (rand_num & NN);
-            }
+            // unsafe {
+            //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
+            //     *vx_ptr = (rand_num & NN);
+            // }
+            chip8.V[nib_1 as usize] = (rand_num & NN);
         },
         0xD => {
             // TODO: this
@@ -292,13 +349,10 @@ fn execute_instruction(chip8: &mut Chip8, window: &mut RendererWindow) {
             // if any pixels turned "off", set VF flag to 1, else set to 0
             let x: u8;
             let y: u8;
-            let v0_ptr = std::ptr::addr_of!(chip8.V0);
-            unsafe {
-                let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                x = *vx_ptr & (chip8.width-1) as u8;
-                y = *vy_ptr & (chip8.height-1) as u8;;
-            }
+            x = chip8.V[nib_1 as usize] & chip8.width as u8 - 1;
+            y = chip8.V[nib_2 as usize] & chip8.height as u8 - 1;
+            chip8.V[0xF] = 0;
+            set_bitmap(chip8, x, y, nib_3, &renderer);
         },
         0xE => {
             match nib_2 {
@@ -316,6 +370,36 @@ fn execute_instruction(chip8: &mut Chip8, window: &mut RendererWindow) {
         }
         _ => println!("command not implemented"),
     }
+}
+
+fn set_bitmap(chip8: &mut Chip8, mut x: u8, mut y: u8, n: u16, renderer: &RendererWindow) {
+    renderer.set_draw_color(0, 0, 0, 255).unwrap();
+    renderer.clear().unwrap();
+    renderer.set_draw_color(255, 255, 255, 255).unwrap();
+    let scale: c_int = chip8.scale;
+    let mut current_row: i32 = 0;
+    let mut current_byte: i32 = 0;
+    let max_row_bytes = chip8.width/8;
+        for i in 0..n {
+            let byte = chip8.mem[i as usize];
+            for j in 0..8 {
+                let bit = (byte >> i) & 1;
+                if chip8.bitmap[x as usize][y as usize] == 1 && bit == 1 {
+                    chip8.V[0xF] = 1;
+                }
+                chip8.bitmap[x as usize][y as usize] | bit;
+                x += 1;
+            }
+            current_byte += 1;
+            if current_row == chip8.height && current_byte == max_row_bytes {
+                return;
+            }
+            if current_byte == max_row_bytes {
+                current_byte = 0;
+                current_row += 1;
+                y += 1;
+            }
+        }
 }
 
 fn main() {
@@ -380,6 +464,15 @@ fn main() {
     // }
 
     'main_loop: loop {
+        // let mut bitmap: [[u16; 64]; 32] = [[0; 64]; 32];
+        // let mut rng = rand::thread_rng();
+        // for i in 0..bitmap.len() {
+        //     for j in 0..bitmap[i].len() {
+        //         let random_number: u16 = rng.gen_range(0..=1);
+        //         bitmap[i][j] = random_number;
+        //     }
+        // }
+        //sdl_draw(&chip8, &bitmap, &renderer);
         while let Some((event, _timestamp)) = sdl.poll_events() {
             match event {
                 Event::Quit => break 'main_loop,
