@@ -355,6 +355,7 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow) {
             set_bitmap(chip8, x, y, nib_3, &renderer);
         },
         0xE => {
+            // TODO: key stuff
             match nib_2 {
                 0x9 => {
                     match nib_3 {
@@ -365,7 +366,49 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow) {
                         _ => println!("command not implemented"),
                     }
                 }
+                0xA => {
+                    match nib_3 {
+                        1 => {
+                            // Checks if key is held down, PC += 2 if not same in vx or if not held down
+                        },
+                        _ => println!("command not implemented"),
+                    }
+                }
                 _ => println!("command not implemented"),
+            }
+        },
+        0xF => {
+            match nib_2 {
+                0 => {
+                    match nib_3 {
+                        7 => {
+                            // Sets VX to current value of dela timer
+                            chip8.V[nib_1] = chip8.timer_delay as u8
+                        },
+                        _ => println!("Command not implemented"),
+                    }
+                },
+                1 => {
+                    match nib_3 {
+                        5 => {
+                            // Set delay timer to value in VX
+                            chip8.timer_delay = chip8.V[nib_1];
+                        },
+                        9 => {
+
+                        },
+                        8 => {
+                            // Set sound timer to value in VX
+                            chip8.timer_sound = chip8.V[nib_1];
+                        },
+                        0xE => {
+                            // Add value in VX to I
+                            chip8.I = chip8.V[nib_1];
+                        },
+                        _ => println!("Command not implemented"),
+                    }
+                },
+                _ => println!("Command not implemented"),
             }
         }
         _ => println!("command not implemented"),
