@@ -39,10 +39,10 @@ fn sdl_draw(chip8: &Chip8, renderer: &RendererWindow) {
 
 
 // return error when an error occurs lmao
-fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow) {
+fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &Sdl) {
     // fetch
-    chip8.mem[chip8.pc as usize] = 0b11011010;
-    chip8.mem[chip8.pc as usize +1] = 0b10101111;
+    chip8.mem[chip8.pc as usize] = 0xF2;
+    chip8.mem[chip8.pc as usize +1] = 0x0A;
     let instruct: u16 = ((chip8.mem[chip8.pc as usize] as u16) << 8) + chip8.mem[(chip8.pc as usize)+1] as u16;
     chip8.pc += 2;
     // decode & execute
@@ -382,8 +382,32 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow) {
                 0 => {
                     match nib_3 {
                         7 => {
-                            // Sets VX to current value of dela timer
-                            chip8.V[nib_1] = chip8.timer_delay as u8
+                            // Sets VX to current value of delay timer
+                            chip8.V[nib_1 as usize] = chip8.timer_delay as u8
+                        },
+                        0xA => {
+                            // Waits for key
+                            println!("waiting for key");
+                            loop {
+                                match sdl.poll_events() {
+                                    Some((event, _timestamp)) => {
+                                        match event {
+                                            Event::Key { win_id, pressed, repeat, scancode, keycode, modifiers } => {
+                                                println!("{:?}, {:?}, {:?}", scancode, keycode, win_id);
+                                                chip8.V[nib_1 as usize] = keycode.0 as u8;
+                                                println!("Keycode: {:?}", keycode)
+                                            }
+                                            _ => {
+                                                chip8.pc -= 2;
+                                                break;
+                                            },
+                                        }
+                                    }
+                                    None => (),
+                                }
+                                println!("{} {}", chip8.pc, chip8.V[nib_1 as usize])
+                            }
+
                         },
                         _ => println!("Command not implemented"),
                     }
@@ -392,22 +416,39 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow) {
                     match nib_3 {
                         5 => {
                             // Set delay timer to value in VX
-                            chip8.timer_delay = chip8.V[nib_1];
+                            chip8.timer_delay = chip8.V[nib_1 as usize];
                         },
                         9 => {
 
                         },
                         8 => {
                             // Set sound timer to value in VX
-                            chip8.timer_sound = chip8.V[nib_1];
+                            chip8.timer_sound = chip8.V[nib_1 as usize];
                         },
                         0xE => {
                             // Add value in VX to I
-                            chip8.I = chip8.V[nib_1];
+                            match chip8.I.checked_add(chip8.V[nib_1 as usize] as u16) {
+                                Some(_) => {
+                                    chip8.I += chip8.V[nib_1 as usize] as u16;
+                                },
+                                None => {
+                                    chip8.I = chip8.I.wrapping_add(chip8.V[nib_1 as usize] as u16);
+                                    chip8.V[0xF] = 1;
+                                }
+                            }
+                            chip8.I += chip8.V[nib_1 as usize] as u16;
                         },
                         _ => println!("Command not implemented"),
                     }
                 },
+                2 => {
+                    match nib_3 {
+                        9 => {
+
+                        },
+                        _ => println!("Command not implemented"),
+                    }
+                }
                 _ => println!("Command not implemented"),
             }
         }
@@ -519,18 +560,18 @@ fn main() {
         while let Some((event, _timestamp)) = sdl.poll_events() {
             match event {
                 Event::Quit => break 'main_loop,
-                Event::Key { win_id, pressed, repeat, scancode, keycode, modifiers } => {
-                    println!("{:?}, {:?}, {:?}", scancode, keycode, win_id);
-                    match scancode.0 {
-                        20 => println!("q"),
-                        26 => println!("w"),
-                        8  => println!("e"),
-                        21 => println!("r"),
-                        _ => println!("other scancode"),
-                    }
-                    execute_instruction(&mut chip8, &mut renderer)  // TODO: fix timing, run at 60fps
-                }
-                _ => (),
+                // Event::Key { win_id, pressed, repeat, scancode, keycode, modifiers } => {
+                //     println!("{:?}, {:?}, {:?}", scancode, keycode, win_id);
+                //     match scancode.0 {
+                //         20 => println!("q"),
+                //         26 => println!("w"),
+                //         8 => println!("e"),
+                //         21 => println!("r"),
+                //         _ => println!("other scancode"),
+                //     }
+
+                //}
+                _ => execute_instruction(&mut chip8, &mut renderer, &sdl)  // TODO: fix timing, run at 60fps,
             }
         }
     }
