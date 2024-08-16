@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 use crate::stack;
 
 pub struct Chip8 {
@@ -46,22 +47,16 @@ impl Chip8 {
             timer_sound: 255,
             bitmap: [[0; 64]; 32],
             V: [0; 16],
-            // V0: 0,
-            // V1: 0,
-            // V2: 0,
-            // V3: 0,
-            // V4: 0,
-            // V5: 0,
-            // V6: 0,
-            // V7: 0,
-            // V8: 0,
-            // V9: 0,
-            // VA: 0,
-            // VB: 0,
-            // VC: 0,
-            // VD: 0,
-            // VE: 0,
-            // VF: 0,
         }
+    }
+
+    pub fn decrement_timer_delay(&mut self) {
+        if self.timer_delay > 0 {self.timer_delay -= 1};
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    pub fn decrement_timer_sound(&mut self) {
+        if self.timer_sound > 0 {self.timer_sound -= 1};
+        std::thread::sleep(std::time::Duration::from_secs(1));
     }
 }

@@ -1,18 +1,43 @@
 extern crate beryllium;
 
 use std::ffi::c_int;
+use std::io::BufRead;
 use beryllium::events::{Event, SDL_Scancode};
 use beryllium::*;
 use beryllium::init::*;
 use beryllium::video::{CreateWinArgs, GlWindow, RendererFlags, RendererWindow, RendererInfo};
-
+use egui::Key::P;
 use rand::Rng;
+use std::sync::{Arc, Mutex};
+use std::thread;
 use chip8::Chip8;
 
+use errors::Error;
 
 mod lib;
 mod stack;
 mod chip8;
+mod errors;
+
+fn exit_with_error(chip8: &Chip8, error: Error, instruction: u16, ) {
+    match error {
+        Error::UnknownInstruction => {
+            println!("Error: UnknownInstruction");
+            println!("Instruction {} does not exist or is not yet implemented.", instruction)
+        },
+        Error::NoFileGiven => {
+            println!("Error: NoFileGiven");
+            println!("No file provided for the program.");
+        },
+        Error::FileNotFound => {
+            println!("Error: FileNotFound");
+            println!("The file path you provided does not exist or cannot be found.");
+        }
+        _ => (),
+    }
+
+    std::process::exit(0)
+}
 
 fn sdl_draw(chip8: &Chip8, renderer: &RendererWindow) {
     renderer.set_draw_color(0, 0, 0, 255).unwrap();
@@ -39,12 +64,10 @@ fn sdl_draw(chip8: &Chip8, renderer: &RendererWindow) {
 
 
 // return error when an error occurs lmao
-fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &Sdl) {
+fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &Sdl, instruct: u16) {
     // fetch
-    chip8.mem[chip8.pc as usize] = 0xF2;
-    chip8.mem[chip8.pc as usize +1] = 0x0A;
-    let instruct: u16 = ((chip8.mem[chip8.pc as usize] as u16) << 8) + chip8.mem[(chip8.pc as usize)+1] as u16;
-    chip8.pc += 2;
+    // chip8.mem[chip8.pc as usize] = 0xF2;
+    // chip8.mem[chip8.pc as usize +1] = 0x0A;
     // decode & execute
     let nib_0 = (instruct >> 12) & 0xF;
     let nib_1 = (instruct >> 8) & 0xF;
@@ -66,13 +89,13 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
                                     // return from subroutine
                                     chip8.pc = chip8.stack.pop();
                                 }
-                                _ => println!("command not implemented"),
+                                _ => exit_with_error(chip8, Error::UnknownInstruction, instruct)
                             }
                         }
-                        _ => println!("command not implemented"),
+                        _ => exit_with_error(chip8, Error::UnknownInstruction, instruct)
                     }
                 }
-                _ => println!("command not implemented"),
+                _ => exit_with_error(chip8, Error::UnknownInstruction, instruct)
             }
         },
         0x1 => {
@@ -86,122 +109,50 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
         },
         0x3 => {
             // skips if VX == NN
-            // let v0_ptr = std::ptr::addr_of!(chip8.V0);
-            // unsafe {
-            //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-            //     if *vx_ptr == ((nib_2 << 4) + nib_3) as u8 {
-            //         chip8.pc += 2;
-            //     };
-            // }
             if chip8.V[nib_1 as usize] == ((nib_2 << 4) + nib_3) as u8 {
                 chip8.pc += 2;
             };
         },
         0x4 => {
             // skips if VX != NN
-            // let v0_ptr = std::ptr::addr_of!(chip8.V0);
-            // unsafe {
-            //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-            //     if *vx_ptr != ((nib_2 << 4) + nib_3) as u8 {
-            //         chip8.pc += 2;
-            //     };
-            // }
             if chip8.V[nib_1 as usize] != ((nib_2 << 4) + nib_3) as u8 {
                 chip8.pc += 2;
             };
         },
         0x5 => {
             // skips if VX == VY
-            // let v0_ptr = std::ptr::addr_of!(chip8.V0);
-            // unsafe {
-            //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-            //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-            //     if *vx_ptr == *vy_ptr {
-            //         chip8.pc += 2;
-            //     };
-            // }
             if chip8.V[nib_1 as usize] == chip8.V[nib_2 as usize] {
                 chip8.pc += 2;
             }
         },
         0x6 => {
             // set VX to NN
-            // let v0_ptr: *mut u8 = &mut chip8.V0;
-            // unsafe {
-            //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-            //     *vx_ptr = ((nib_2 << 4) + nib_3) as u8;
-            // }
             chip8.V[nib_1 as usize] = ((nib_2 << 4) + nib_3) as u8;
         },
         0x7 => {
             // add NN to VX
-            // let v0_ptr: *mut u8 = &mut chip8.V0;
-            // unsafe {
-            //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-            //     *vx_ptr += ((nib_2 << 4) + nib_3) as u8;
-            // }
             chip8.V[nib_1 as usize] += ((nib_2 << 4) + nib_3) as u8;
         },
         0x8 => {
             match nib_3 {
                 0x0 => {
                     // set VX to VY
-                    // let v0_ptr: *mut u8 = &mut chip8.V0;
-                    // unsafe {
-                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                    //     *vx_ptr = *vy_ptr;
-                    // }
                     chip8.V[nib_1 as usize] = chip8.V[nib_2 as usize]
                 },
                 0x1 => {
                     // set VX to VX | VY
-                    // let v0_ptr: *mut u8 = &mut chip8.V0;
-                    // unsafe {
-                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                    //     *vx_ptr |= *vy_ptr;
-                    // }
                     chip8.V[nib_1 as usize] |= chip8.V[nib_2 as usize];
                 },
                 0x2 => {
-                    // set VX to VX | VY
-                    // let v0_ptr: *mut u8 = &mut chip8.V0;
-                    // unsafe {
-                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                    //     *vx_ptr &= *vy_ptr;
-                    // }
+                    // set VX to VX & VY
+                    chip8.V[nib_1 as usize] &= chip8.V[nib_2 as usize];
                 },
                 0x3 => {
                     // set VX to VX | VY
-                    // let v0_ptr: *mut u8 = &mut chip8.V0;
-                    // unsafe {
-                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                    //     *vx_ptr ^= *vy_ptr;
-                    // }
                     chip8.V[nib_1 as usize] ^= chip8.V[nib_2 as usize];
                 },
                 0x4 => {
                     // set VX to VX + VY
-                    // let v0_ptr: *mut u8 = &mut chip8.V0;
-                    // unsafe {
-                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                    //     let vx_as_num = *vx_ptr;
-                    //     let vy_as_num = *vy_ptr;
-                    //     match vx_as_num.checked_add(vy_as_num) {
-                    //         Some(_) => {
-                    //             *vx_ptr += *vy_ptr;
-                    //             chip8.VF = 0;
-                    //         },
-                    //         None => {
-                    //             *vx_ptr = *vx_ptr.wrapping_add(*vy_ptr as usize);
-                    //             chip8.VF = 1;
-                    //         }
-                    //     };
-                    // }
                     match chip8.V[nib_1 as usize].checked_add(chip8.V[nib_2 as usize]) {
                         Some(_) => {
                             chip8.V[nib_1 as usize] += chip8.V[nib_2 as usize];
@@ -215,23 +166,6 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
                 },
                 0x5 => {
                     // set VX to VX - VY
-                    // let v0_ptr: *mut u8 = &mut chip8.V0;
-                    // unsafe {
-                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                    //     let vx_as_num = *vx_ptr;
-                    //     let vy_as_num = *vy_ptr;
-                    //     match vx_as_num.checked_sub(vy_as_num) {
-                    //         Some(_) => {
-                    //             *vx_ptr -= *vy_ptr;
-                    //             chip8.VF = 1;
-                    //         },
-                    //         None => {
-                    //             *vx_ptr = *vx_ptr.wrapping_sub(*vy_ptr as usize);
-                    //             chip8.VF = 0;
-                    //         }
-                    //     };
-                    // }
                     match chip8.V[nib_1 as usize].checked_sub(chip8.V[nib_2 as usize]) {
                         Some(_) => {
                             chip8.V[nib_1 as usize] -= chip8.V[nib_2 as usize];
@@ -246,35 +180,10 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
                 0x6 => {
                     // TODO: make configurable by user which version to use
                     // set VX to VY, shift by 1 to right
-                    // let v0_ptr: *mut u8 = &mut chip8.V0;
-                    // unsafe {
-                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                    //     *vx_ptr = *vy_ptr;
-                    //     chip8.VF = *vx_ptr & 1;
-                    //     *vx_ptr >>= 1;
-                    // }
                     chip8.V[nib_1 as usize] = chip8.V[nib_2 as usize] >> 1;
                 },
                 0x7 => {
                     // set VX to VY - VX
-                    // let v0_ptr: *mut u8 = &mut chip8.V0;
-                    // unsafe {
-                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                    //     let vx_as_num = *vx_ptr;
-                    //     let vy_as_num = *vy_ptr;
-                    //     match vy_as_num.checked_sub(vx_as_num) {
-                    //         Some(_) => {
-                    //             *vx_ptr = *vy_ptr - *vx_ptr;
-                    //             chip8.VF = 1;
-                    //         },
-                    //         None => {
-                    //             *vx_ptr = *vy_ptr.wrapping_sub(*vx_ptr as usize);
-                    //             chip8.VF = 0;
-                    //         }
-                    //     };
-                    // }
                     match chip8.V[nib_2 as usize].checked_sub(chip8.V[nib_1 as usize]) {
                         Some(_) => {
                             chip8.V[nib_1 as usize] = chip8.V[nib_2 as usize] - chip8.V[nib_1 as usize];
@@ -289,31 +198,15 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
                 0xE => {
                     // TODO: make configurable by user which version to use
                     // set VX to VY, shift by 1 to right
-                    // let v0_ptr: *mut u8 = &mut chip8.V0;
-                    // unsafe {
-                    //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-                    //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-                    //     *vx_ptr = *vy_ptr;
-                    //     chip8.VF = (*vx_ptr >> 7) & 1;
-                    //     *vx_ptr <<= 1;
-                    // }
                     chip8.V[nib_1 as usize] = chip8.V[nib_2 as usize];
                     chip8.V[0xF] = (chip8.V[nib_1 as usize] > 7) as u8 & 1;
                     chip8.V[nib_1 as usize] << 1;
                 },
-                _ => println!("command not implemented"),
+                _ => exit_with_error(chip8, Error::UnknownInstruction, instruct),
             }
         }
         0x9 => {
             // skips if VX != VY
-            // let v0_ptr = std::ptr::addr_of!(chip8.V0);
-            // unsafe {
-            //     let vx_ptr = v0_ptr.offset((nib_1 as u8) as isize);
-            //     let vy_ptr = v0_ptr.offset((nib_2 as u8) as isize);
-            //     if *vx_ptr != *vy_ptr {
-            //         chip8.pc += 2;
-            //     };
-            // }
             if chip8.V[nib_1 as usize] != chip8.V[nib_2 as usize] {
                 chip8.pc += 2;
             }
@@ -330,7 +223,7 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
         0xC => {
             // set VX to rand num & NN
             // let v0_ptr: *mut u8 = &mut chip8.V0;
-            let NN:u8 = ((nib_2 << 4) + nib_3) as u8;
+            let NN: u8 = ((nib_2 << 4) + nib_3) as u8;
             let mut rng = rand::thread_rng();
             let rand_num: u8 = (rng.gen::<u8>());
             // unsafe {
@@ -361,9 +254,19 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
                     match nib_3 {
                         0xE => {
                             // Checks if key is held down, PC += 2
-
+                            match sdl.poll_events() {
+                                Some((event, _timestamp)) => {
+                                    match event {
+                                        Event::Key { win_id, pressed, repeat, scancode, keycode, modifiers } => {
+                                            chip8.pc += 2;
+                                        }
+                                        _ => (),
+                                    }
+                                }
+                                None => (),
+                            }
                         }
-                        _ => println!("command not implemented"),
+                        _ => exit_with_error(chip8, Error::UnknownInstruction, instruct),
                     }
                 }
                 0xA => {
@@ -371,10 +274,10 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
                         1 => {
                             // Checks if key is held down, PC += 2 if not same in vx or if not held down
                         },
-                        _ => println!("command not implemented"),
+                        _ => exit_with_error(chip8, Error::UnknownInstruction, instruct),
                     }
                 }
-                _ => println!("command not implemented"),
+                _ => exit_with_error(chip8, Error::UnknownInstruction, instruct),
             }
         },
         0xF => {
@@ -387,15 +290,12 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
                         },
                         0xA => {
                             // Waits for key
-                            println!("waiting for key");
                             loop {
                                 match sdl.poll_events() {
                                     Some((event, _timestamp)) => {
                                         match event {
                                             Event::Key { win_id, pressed, repeat, scancode, keycode, modifiers } => {
-                                                println!("{:?}, {:?}, {:?}", scancode, keycode, win_id);
                                                 chip8.V[nib_1 as usize] = keycode.0 as u8;
-                                                println!("Keycode: {:?}", keycode)
                                             }
                                             _ => {
                                                 chip8.pc -= 2;
@@ -405,11 +305,10 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
                                     }
                                     None => (),
                                 }
-                                println!("{} {}", chip8.pc, chip8.V[nib_1 as usize])
                             }
 
                         },
-                        _ => println!("Command not implemented"),
+                        _ => exit_with_error(chip8, Error::UnknownInstruction, instruct),
                     }
                 },
                 1 => {
@@ -438,21 +337,62 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
                             }
                             chip8.I += chip8.V[nib_1 as usize] as u16;
                         },
-                        _ => println!("Command not implemented"),
+                        _ => exit_with_error(chip8, Error::UnknownInstruction, instruct),
                     }
                 },
                 2 => {
                     match nib_3 {
                         9 => {
-
+                            // I set to addr of char in VX (last nibble)
+                            let second_nib = chip8.V[nib_1 as usize] >> 4;
+                            chip8.I = second_nib as u16;
                         },
-                        _ => println!("Command not implemented"),
+                        _ => exit_with_error(chip8, Error::UnknownInstruction, instruct),
+                    }
+                },
+                3 => {
+                    match nib_3 {
+                        3 => {
+                            let mut num = chip8.V[nib_3 as usize];
+                            let mut i = 0;
+                            while num > 0 {
+                                chip8.mem[(chip8.I + i) as usize] = num % 10;
+                                num /= 10;
+                                i += 1;
+                            }
+                        },
+                        _ => exit_with_error(chip8, Error::UnknownInstruction, instruct),
+                    }
+                },
+                // uses modern version
+                5 => {
+                    match nib_3 {
+                        5 => {
+                            let mut i = 0;
+                            while i <= nib_1 {
+                                chip8.mem[(chip8.I + i) as usize] = chip8.V[i as usize];
+                                i += 1;
+                            }
+                        },
+                        _ => exit_with_error(chip8, Error::UnknownInstruction, instruct),
+                    }
+                },
+                6 => {
+                    match nib_3 {
+                        6 => {
+                            let mut i = 0;
+                            while i <= nib_1 {
+                                chip8.V[i as usize] = chip8.mem[(chip8.I + i) as usize];
+                                i += 1;
+                            }
+                        },
+                        _ => exit_with_error(chip8, Error::UnknownInstruction, instruct),
                     }
                 }
-                _ => println!("Command not implemented"),
+                _ => exit_with_error(chip8, Error::UnknownInstruction, instruct),
             }
         }
-        _ => println!("command not implemented"),
+        _ => exit_with_error(chip8, Error::UnknownInstruction, instruct),
     }
 }
 
@@ -486,10 +426,18 @@ fn set_bitmap(chip8: &mut Chip8, mut x: u8, mut y: u8, n: u16, renderer: &Render
         }
 }
 
+fn parse_line(line: String) -> u16 {
+    println!("{line}");
+    return 1;
+}
+
 fn main() {
     println!("Hello, world!");
 
     let mut chip8 = Chip8::new();
+
+    let mut chip8 = Arc::new(Mutex::new(Chip8::new()));
+    // let chip8_clone = Arc::clone(&chip8);
 
     // Font
     let font: [u8; 80] = [
@@ -510,8 +458,33 @@ fn main() {
         0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
         0xF0, 0x80, 0xF0, 0x80, 0x80, // F
     ];
+
+    let mut chip8 = chip8.lock().unwrap();
     chip8.mem[0x50..0xA0].clone_from_slice(&font);
-    println!("{}", chip8.mem[0x50]);
+
+    // Load in code
+    chip8.pc = 0x200;
+    let mut args: Vec<_> = std::env::args().collect();
+    if args.len() < 2 {
+        exit_with_error(&chip8, Error::NoFileGiven, 0);
+    }
+
+    let path = args.get(1).unwrap();
+    let file_result = std::fs::File::open(path);
+    match file_result {
+        Err(_) => {
+            exit_with_error(&chip8, Error::FileNotFound, 0)
+        }
+        Ok(_) => {}
+    }
+
+    let data: Vec<u8> = std::fs::read(path).unwrap();
+    for byte in data {
+        chip8.mem[chip8.pc as usize] = byte;
+        chip8.pc += 1;
+    }
+    chip8.pc = 0x200;
+
     // Window
     let sdl = Sdl::init(InitFlags::EVERYTHING);
 
@@ -547,6 +520,13 @@ fn main() {
     //     glBindBuffer(GL_ARRAY_BUFFER, vb0);
     // }
 
+    // Timers
+    let timers_handle = std::thread::spawn(move || {
+        let mut chip8 = chip8_clone.lock().unwrap();
+        chip8.decrement_timer_delay();
+        chip8.decrement_timer_sound();
+    });
+
     'main_loop: loop {
         // let mut bitmap: [[u16; 64]; 32] = [[0; 64]; 32];
         // let mut rng = rand::thread_rng();
@@ -558,8 +538,18 @@ fn main() {
         // }
         //sdl_draw(&chip8, &bitmap, &renderer);
         while let Some((event, _timestamp)) = sdl.poll_events() {
+            println!("PC: {}",chip8.pc);
+            let instruct: u16 = ((chip8.mem[chip8.pc as usize] as u16) << 8) + chip8.mem[(chip8.pc as usize)+1] as u16;
+            chip8.pc += 2;
+            // TODO: fix this maybe
+            if chip8.pc == 4096 {
+                loop{}
+            }
             match event {
-                Event::Quit => break 'main_loop,
+                Event::Quit => {
+                    timers_handle.join().unwrap();
+                    break 'main_loop
+                },
                 // Event::Key { win_id, pressed, repeat, scancode, keycode, modifiers } => {
                 //     println!("{:?}, {:?}, {:?}", scancode, keycode, win_id);
                 //     match scancode.0 {
@@ -571,7 +561,8 @@ fn main() {
                 //     }
 
                 //}
-                _ => execute_instruction(&mut chip8, &mut renderer, &sdl)  // TODO: fix timing, run at 60fps,
+                _ => execute_instruction(&mut chip8, &mut renderer, &sdl, instruct)  // TODO: fix timing, run at 60fps,
+
             }
         }
     }
