@@ -1,4 +1,5 @@
 extern crate beryllium;
+extern crate win_beep;
 
 use std::ffi::c_int;
 use std::io::BufRead;
@@ -10,6 +11,7 @@ use egui::Key::P;
 use rand::Rng;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 use chip8::Chip8;
 
 use errors::Error;
@@ -404,26 +406,29 @@ fn set_bitmap(chip8: &mut Chip8, mut x: u8, mut y: u8, n: u16, renderer: &Render
     let mut current_row: i32 = 0;
     let mut current_byte: i32 = 0;
     let max_row_bytes = chip8.width/8;
-        for i in 0..n {
-            let byte = chip8.mem[i as usize];
-            for j in 0..8 {
-                let bit = (byte >> i) & 1;
-                if chip8.bitmap[x as usize][y as usize] == 1 && bit == 1 {
-                    chip8.V[0xF] = 1;
-                }
-                chip8.bitmap[x as usize][y as usize] | bit;
-                x += 1;
+    let x_cpy = x;
+    let y_cpy = y;
+    for i in 0..n {
+        let byte = chip8.mem[i as usize];
+        for j in 0..8 {
+            let bit = (byte >> j) & 1;
+            if chip8.bitmap[x as usize][y as usize] == 1 && bit == 1 {
+                chip8.V[0xF] = 1;
             }
-            current_byte += 1;
-            if current_row == chip8.height && current_byte == max_row_bytes {
-                return;
-            }
-            if current_byte == max_row_bytes {
-                current_byte = 0;
-                current_row += 1;
-                y += 1;
-            }
+            chip8.bitmap[x as usize][y as usize] | bit;
+            x += 1;
         }
+        x = x_cpy;
+        current_byte += 1;
+        if current_row == chip8.height && current_byte == max_row_bytes {
+            return;
+        }
+        if current_byte == max_row_bytes {
+            current_byte = 0;
+            current_row += 1;
+            y += 1;
+        }
+    }
 }
 
 fn parse_line(line: String) -> u16 {
@@ -435,9 +440,6 @@ fn main() {
     println!("Hello, world!");
 
     let mut chip8 = Chip8::new();
-
-    let mut chip8 = Arc::new(Mutex::new(Chip8::new()));
-    // let chip8_clone = Arc::clone(&chip8);
 
     // Font
     let font: [u8; 80] = [
@@ -459,7 +461,6 @@ fn main() {
         0xF0, 0x80, 0xF0, 0x80, 0x80, // F
     ];
 
-    let mut chip8 = chip8.lock().unwrap();
     chip8.mem[0x50..0xA0].clone_from_slice(&font);
 
     // Load in code
@@ -520,13 +521,7 @@ fn main() {
     //     glBindBuffer(GL_ARRAY_BUFFER, vb0);
     // }
 
-    // Timers
-    let timers_handle = std::thread::spawn(move || {
-        let mut chip8 = chip8_clone.lock().unwrap();
-        chip8.decrement_timer_delay();
-        chip8.decrement_timer_sound();
-    });
-
+    let mut time_start = std::time::Instant::now();
     'main_loop: loop {
         // let mut bitmap: [[u16; 64]; 32] = [[0; 64]; 32];
         // let mut rng = rand::thread_rng();
@@ -537,8 +532,29 @@ fn main() {
         //     }
         // }
         //sdl_draw(&chip8, &bitmap, &renderer);
+
+        // Timers
+        let time_elapsed = time_start.elapsed().as_secs();
+        if time_elapsed == 1 {
+            chip8.timer_delay -= 1;
+            chip8.timer_sound -= 1;
+            time_start = std::time::Instant::now();
+
+            if chip8.timer_delay == 0 {
+                println!("timer delay done");
+                chip8.timer_delay = 60;
+            }
+            if chip8.timer_sound == 0 {
+                println!("timer delay done");
+                chip8.timer_sound = 60;
+            } else {
+                println!("Here");
+                win_beep::beep_with_hz_and_millis(1000, 100);
+            }
+        }
+
         while let Some((event, _timestamp)) = sdl.poll_events() {
-            println!("PC: {}",chip8.pc);
+
             let instruct: u16 = ((chip8.mem[chip8.pc as usize] as u16) << 8) + chip8.mem[(chip8.pc as usize)+1] as u16;
             chip8.pc += 2;
             // TODO: fix this maybe
@@ -547,7 +563,6 @@ fn main() {
             }
             match event {
                 Event::Quit => {
-                    timers_handle.join().unwrap();
                     break 'main_loop
                 },
                 // Event::Key { win_id, pressed, repeat, scancode, keycode, modifiers } => {
@@ -561,8 +576,7 @@ fn main() {
                 //     }
 
                 //}
-                _ => execute_instruction(&mut chip8, &mut renderer, &sdl, instruct)  // TODO: fix timing, run at 60fps,
-
+                _ => execute_instruction(&mut chip8, &mut renderer, &sdl, instruct),  // TODO: fix timing, run at 60fps,
             }
         }
     }

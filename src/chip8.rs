@@ -43,8 +43,8 @@ impl Chip8 {
             pc: 0,
             I: 0,
             stack: stack::Stack::new(),
-            timer_delay: 255,
-            timer_sound: 255,
+            timer_delay: 10,
+            timer_sound: 10,
             bitmap: [[0; 64]; 32],
             V: [0; 16],
         }
