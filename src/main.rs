@@ -1,5 +1,4 @@
 extern crate beryllium;
-extern crate win_beep;
 
 use std::ffi::c_int;
 use std::io::BufRead;
@@ -16,11 +15,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use chip8::Chip8;
 
 use errors::Error;
+use beeps::*;
 
-mod lib;
 mod stack;
 mod chip8;
 mod errors;
+mod beeps;
 
 fn exit_with_error(chip8: &Chip8, error: Error, instruction: u16, ) {
     match error {
@@ -433,11 +433,6 @@ fn set_bitmap(chip8: &mut Chip8, mut x: u8, mut y: u8, n: u16) {
     }
 }
 
-fn parse_line(line: String) -> u16 {
-    println!("{line}");
-    return 1;
-}
-
 fn main() {
     println!("Hello, world!");
 
@@ -554,8 +549,7 @@ fn main() {
                 println!("timer delay done");
                 chip8.timer_sound = 60;
             } else {
-                if OS == "windows" { win_beep::beep_with_hz_and_millis(1000, 100); }
-                else { println!("{}", '\x07') }
+                beep()
             }
         }
 
