@@ -3,6 +3,7 @@ extern crate win_beep;
 
 use std::ffi::c_int;
 use std::io::BufRead;
+use std::env::consts::OS;
 use beryllium::events::{Event, SDL_Scancode};
 use beryllium::*;
 use beryllium::init::*;
@@ -44,10 +45,11 @@ fn exit_with_error(chip8: &Chip8, error: Error, instruction: u16, ) {
 fn sdl_draw(chip8: &Chip8, renderer: &RendererWindow) {
     renderer.set_draw_color(0, 0, 0, 255).unwrap();
     renderer.clear().unwrap();
+
     renderer.set_draw_color(255, 255, 255, 255).unwrap();
     let scale: c_int = chip8.scale;
-    for (i, row) in chip8.bitmap.iter().enumerate() {
-        for (j, &pixel) in row.iter().enumerate() {
+    for (i, row) in chip8.bitmap.iter().enumerate() {  // current row (y)
+        for (j, &pixel) in row.iter().enumerate() {  // current pixel in row (x)
             if pixel == 0 {continue}
             let x: c_int = j as c_int;
             let y: c_int = i as c_int;
@@ -57,11 +59,12 @@ fn sdl_draw(chip8: &Chip8, renderer: &RendererWindow) {
                 p1 = [x*scale, y*scale+k];
                 p2 = [x*scale+scale, y*scale+k];
                 let points: [[c_int; 2]; 2] = [p1, p2];
-                renderer.draw_lines(&points).expect("nope");
-                renderer.present();
+                renderer.draw_lines(&points).expect("renderer is not drawing lines");
+                // renderer.present(); might have to be here if it builds too slowly
             }
         }
     }
+    renderer.present();
 }
 
 
@@ -244,10 +247,11 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
             // if any pixels turned "off", set VF flag to 1, else set to 0
             let x: u8;
             let y: u8;
-            x = chip8.V[nib_1 as usize] & chip8.width as u8 - 1;
-            y = chip8.V[nib_2 as usize] & chip8.height as u8 - 1;
+            x = chip8.V[nib_1 as usize] & (chip8.width as u8 - 1);
+            y = chip8.V[nib_2 as usize] & (chip8.height as u8 - 1);
             chip8.V[0xF] = 0;
-            set_bitmap(chip8, x, y, nib_3, &renderer);
+            set_bitmap(chip8, x, y, nib_3);
+            sdl_draw(chip8, renderer);
         },
         0xE => {
             // TODO: key stuff
@@ -274,6 +278,7 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
                 0xA => {
                     match nib_3 {
                         1 => {
+                            // TODO: this
                             // Checks if key is held down, PC += 2 if not same in vx or if not held down
                         },
                         _ => exit_with_error(chip8, Error::UnknownInstruction, instruct),
@@ -398,24 +403,21 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
     }
 }
 
-fn set_bitmap(chip8: &mut Chip8, mut x: u8, mut y: u8, n: u16, renderer: &RendererWindow) {
-    renderer.set_draw_color(0, 0, 0, 255).unwrap();
-    renderer.clear().unwrap();
-    renderer.set_draw_color(255, 255, 255, 255).unwrap();
-    let scale: c_int = chip8.scale;
+fn set_bitmap(chip8: &mut Chip8, mut x: u8, mut y: u8, n: u16) {
     let mut current_row: i32 = 0;
     let mut current_byte: i32 = 0;
     let max_row_bytes = chip8.width/8;
     let x_cpy = x;
     let y_cpy = y;
     for i in 0..n {
-        let byte = chip8.mem[i as usize];
+        let byte = chip8.mem[(chip8.I + i) as usize];
         for j in 0..8 {
             let bit = (byte >> j) & 1;
-            if chip8.bitmap[x as usize][y as usize] == 1 && bit == 1 {
+            println!("({}, {})", x, y);
+            if chip8.bitmap[y as usize][x as usize] == 1 && bit == 1 {
                 chip8.V[0xF] = 1;
             }
-            chip8.bitmap[x as usize][y as usize] | bit;
+            chip8.bitmap[y as usize][x as usize] |= bit;
             x += 1;
         }
         x = x_cpy;
@@ -523,15 +525,19 @@ fn main() {
 
     let mut time_start = std::time::Instant::now();
     'main_loop: loop {
-        // let mut bitmap: [[u16; 64]; 32] = [[0; 64]; 32];
+
+        // Test Renderer
+        // chip8.bitmap = [[0; 64]; 32];
         // let mut rng = rand::thread_rng();
-        // for i in 0..bitmap.len() {
-        //     for j in 0..bitmap[i].len() {
-        //         let random_number: u16 = rng.gen_range(0..=1);
-        //         bitmap[i][j] = random_number;
+        // for i in 0..chip8.bitmap.len() {
+        //     for j in 0..chip8.bitmap[i].len() {
+        //         let random_number: u8 = rng.gen_range(0..2);
+        //         println!("Rand num: {random_number}");
+        //         chip8.bitmap[i][j] = random_number;
         //     }
         // }
-        //sdl_draw(&chip8, &bitmap, &renderer);
+        // sdl_draw(&chip8, &renderer);
+
 
         // Timers
         let time_elapsed = time_start.elapsed().as_secs();
@@ -548,8 +554,8 @@ fn main() {
                 println!("timer delay done");
                 chip8.timer_sound = 60;
             } else {
-                println!("Here");
-                win_beep::beep_with_hz_and_millis(1000, 100);
+                if OS == "windows" { win_beep::beep_with_hz_and_millis(1000, 100); }
+                else { println!("{}", '\x07') }
             }
         }
 
@@ -577,6 +583,7 @@ fn main() {
 
                 //}
                 _ => execute_instruction(&mut chip8, &mut renderer, &sdl, instruct),  // TODO: fix timing, run at 60fps,
+                // _ => ()
             }
         }
     }
