@@ -2,18 +2,17 @@ extern crate beryllium;
 
 use std::ffi::c_int;
 use std::io::BufRead;
-use std::env::consts::OS;
+use std::sync::{Arc, Mutex};
+use std::thread;
 use beryllium::events::{Event, SDL_Scancode};
 use beryllium::*;
 use beryllium::init::*;
-use beryllium::video::{CreateWinArgs, GlWindow, RendererFlags, RendererWindow, RendererInfo};
-use egui::Key::P;
+use beryllium::video::{CreateWinArgs, GlWindow, RendererFlags, RendererWindow, RendererInfo, GlContextFlags};
 use rand::Rng;
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use rodio::*;
+use rodio::source::SineWave;
 use chip8::Chip8;
-
 use errors::Error;
 use beeps::*;
 
@@ -26,7 +25,7 @@ fn exit_with_error(chip8: &Chip8, error: Error, instruction: u16, ) {
     match error {
         Error::UnknownInstruction => {
             println!("Error: UnknownInstruction");
-            println!("Instruction {} does not exist or is not yet implemented.", instruction)
+            println!("Instruction {:#04x} does not exist or is not yet implemented.", instruction)
         },
         Error::NoFileGiven => {
             println!("Error: NoFileGiven");
@@ -136,7 +135,7 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
         },
         0x7 => {
             // add NN to VX
-            chip8.V[nib_1 as usize] += ((nib_2 << 4) + nib_3) as u8;
+            chip8.V[nib_1 as usize] = chip8.V[nib_1 as usize].overflowing_add(((nib_2 << 4) + nib_3) as u8).0;
         },
         0x8 => {
             match nib_3 {
@@ -185,7 +184,9 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
                 0x6 => {
                     // TODO: make configurable by user which version to use
                     // set VX to VY, shift by 1 to right
-                    chip8.V[nib_1 as usize] = chip8.V[nib_2 as usize] >> 1;
+                    let y_value = chip8.V[nib_2 as usize];
+                    chip8.V[nib_1 as usize] = y_value >> 1;
+                    chip8.V[0xF] = y_value & 1;
                 },
                 0x7 => {
                     // set VX to VY - VX
@@ -202,9 +203,9 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
                 },
                 0xE => {
                     // TODO: make configurable by user which version to use
-                    // set VX to VY, shift by 1 to right
+                    // set VX to VY, shift by 1 to left
                     chip8.V[nib_1 as usize] = chip8.V[nib_2 as usize];
-                    chip8.V[0xF] = (chip8.V[nib_1 as usize] > 7) as u8 & 1;
+                    chip8.V[0xF] = (chip8.V[nib_1 as usize] >> 7) & 1;
                     chip8.V[nib_1 as usize] << 1;
                 },
                 _ => exit_with_error(chip8, Error::UnknownInstruction, instruct),
@@ -238,7 +239,6 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
             chip8.V[nib_1 as usize] = (rand_num & NN);
         },
         0xD => {
-            // TODO: this
             // display
             // draws N pixels tall sprite from mem location that I reg is holding to the screen
             // VX, VY coords
@@ -247,8 +247,8 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
             // if any pixels turned "off", set VF flag to 1, else set to 0
             let x: u8;
             let y: u8;
-            x = chip8.V[nib_1 as usize] & (chip8.width as u8 - 1);
-            y = chip8.V[nib_2 as usize] & (chip8.height as u8 - 1);
+            x = (chip8.V[nib_1 as usize] & (chip8.width as u8 - 1)) & 63;
+            y = (chip8.V[nib_2 as usize] & (chip8.height as u8 - 1)) & 31;
             chip8.V[0xF] = 0;
             set_bitmap(chip8, x, y, nib_3);
             sdl_draw(chip8, renderer);
@@ -360,7 +360,7 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
                 3 => {
                     match nib_3 {
                         3 => {
-                            let mut num = chip8.V[nib_3 as usize];
+                            let mut num = chip8.V[nib_1 as usize];
                             let mut i = 0;
                             while num > 0 {
                                 chip8.mem[(chip8.I + i) as usize] = num % 10;
@@ -386,7 +386,7 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
                 },
                 6 => {
                     match nib_3 {
-                        6 => {
+                        5 => {
                             let mut i = 0;
                             while i <= nib_1 {
                                 chip8.V[i as usize] = chip8.mem[(chip8.I + i) as usize];
@@ -404,32 +404,19 @@ fn execute_instruction(chip8: &mut Chip8, renderer: &mut RendererWindow, sdl: &S
 }
 
 fn set_bitmap(chip8: &mut Chip8, mut x: u8, mut y: u8, n: u16) {
-    let mut current_row: i32 = 0;
-    let mut current_byte: i32 = 0;
-    let max_row_bytes = chip8.width/8;
     let x_cpy = x;
-    let y_cpy = y;
-    for i in 0..n {
+    for i in 0..n {  // bytes
         let byte = chip8.mem[(chip8.I + i) as usize];
-        for j in 0..8 {
-            let bit = (byte >> j) & 1;
-            println!("({}, {})", x, y);
+        for j in 0..8 {  // bits
+            let bit = (byte & (1 << 7-j)) >> 7-j;
             if chip8.bitmap[y as usize][x as usize] == 1 && bit == 1 {
                 chip8.V[0xF] = 1;
             }
-            chip8.bitmap[y as usize][x as usize] |= bit;
+            chip8.bitmap[y as usize][x as usize] ^= bit;
             x += 1;
         }
         x = x_cpy;
-        current_byte += 1;
-        if current_row == chip8.height && current_byte == max_row_bytes {
-            return;
-        }
-        if current_byte == max_row_bytes {
-            current_byte = 0;
-            current_row += 1;
-            y += 1;
-        }
+        y += 1;
     }
 }
 
@@ -485,18 +472,6 @@ fn main() {
 
     // Window
     let sdl = Sdl::init(InitFlags::EVERYTHING);
-
-    let win_args = CreateWinArgs{
-        title: "Chip-8",
-        width: chip8.width*chip8.scale,
-        height: chip8.height*chip8.scale,
-        allow_high_dpi: false,
-        borderless: false,
-        resizable: false,
-    };
-    //let mut window = sdl.create_gl_window(
-    //    win_args,
-    //).expect("Failed to make window :(");
     let win_args = CreateWinArgs{
         title: "Chip-8",
         width: chip8.width*chip8.scale,
@@ -508,17 +483,24 @@ fn main() {
     let render_flags: RendererFlags = <RendererFlags as std::default::Default>::default();
     let mut renderer = sdl.create_renderer_window(win_args, render_flags,).unwrap();
 
-    // unsafe {
-    //     let mut vao = 0;
-    //     glGenVertexArrays(1, &mut vao);
-    //
-    //     let mut vb0 = 0;
-    //     glGenBuffers(1, &mut vb0);
-    //
-    //     glBindBuffer(GL_ARRAY_BUFFER, vb0);
-    // }
+    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+    let sine_wave = SineWave::new(440f32);
+    let stop_flag = Arc::new(Mutex::new(false));
+    let stop_flag_clone = Arc::clone(&stop_flag);
+    let handle = thread::spawn(move || {
+        let sink = Sink::try_new(&stream_handle).unwrap();
+        sink.append(sine_wave);
+        loop {
+            if *stop_flag_clone.lock().unwrap() {
+                sink.pause();
+            } else {
+                sink.play();
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    });
 
-    let mut time_start = std::time::Instant::now();
+    let mut time_start:Instant = Instant::now();
     'main_loop: loop {
 
         // Test Renderer
@@ -535,32 +517,26 @@ fn main() {
 
 
         // Timers
-        let time_elapsed = time_start.elapsed().as_secs();
-        if time_elapsed == 1 {
-            chip8.timer_delay -= 1;
-            chip8.timer_sound -= 1;
-            time_start = std::time::Instant::now();
+        let time_elapsed:u128 = time_start.elapsed().as_nanos();
+        if time_elapsed >= 16_666_667 {
+            // println!("{}, {}", chip8.timer_delay, chip8.timer_sound);
+            if chip8.timer_delay != 0 {
+                chip8.timer_delay -= 1;
+            }
 
-            if chip8.timer_delay == 0 {
-                println!("timer delay done");
-                chip8.timer_delay = 60;
-            }
-            if chip8.timer_sound == 0 {
-                println!("timer delay done");
-                chip8.timer_sound = 60;
+            if chip8.timer_sound != 0 {
+                chip8.timer_sound -= 1;
+                *stop_flag.lock().unwrap() = false;
             } else {
-                beep()
+                *stop_flag.lock().unwrap() = true;
             }
+            time_start = Instant::now();
         }
 
+        let instruct: u16 = ((chip8.mem[chip8.pc as usize] as u16) << 8) + chip8.mem[(chip8.pc as usize)+1] as u16;
+        chip8.pc += 2;
+        // TODO: fix this maybe
         while let Some((event, _timestamp)) = sdl.poll_events() {
-
-            let instruct: u16 = ((chip8.mem[chip8.pc as usize] as u16) << 8) + chip8.mem[(chip8.pc as usize)+1] as u16;
-            chip8.pc += 2;
-            // TODO: fix this maybe
-            if chip8.pc == 4096 {
-                loop{}
-            }
             match event {
                 Event::Quit => {
                     break 'main_loop
@@ -576,9 +552,9 @@ fn main() {
                 //     }
 
                 //}
-                _ => execute_instruction(&mut chip8, &mut renderer, &sdl, instruct),  // TODO: fix timing, run at 60fps,
-                // _ => ()
+                _ => ()
             }
         }
+        execute_instruction(&mut chip8, &mut renderer, &sdl, instruct);  // TODO: fix timing, run at 60fps,
     }
 }
